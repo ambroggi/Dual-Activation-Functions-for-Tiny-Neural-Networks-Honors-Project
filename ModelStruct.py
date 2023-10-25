@@ -10,7 +10,7 @@ class MultiActivation(nn.Module):
         super().__init__()
         self.modList = nn.ModuleList()
         for funct in modules:
-            self.modList.append(funct())
+            self.modList.append(activationDict[funct]())
 
     def forward(self, x):
         xs = [y(x) for y in self.modList]
@@ -42,18 +42,22 @@ class Cosign(nn.Module):
 
 
 class BeansModule(nn.Module):
-    def __init__(self, in_features, out_features, activationlist):
+    def __init__(self, in_features, out_features, activationlist, norm=True):
         super().__init__()
         current_features = in_features
         self.sequence = nn.Sequential()
         self.layersize = 20
 
-        # conv = 8
-        # self.sequence.append(nn.Conv1d(1, conv, kernel_size=3))
-        # self.sequence.append(nn.Flatten())
-        # current_features *= conv
+        conv = 80
+        self.sequence.append(nn.Conv1d(1, conv, kernel_size=3))
+        self.sequence.append(nn.Flatten())
+        # self.conv = nn.Conv1d(1, conv, kernel_size=3)
+        # self.flatten = nn.Flatten()
+        current_features = ((current_features - 2) // 1) * conv
 
         for x in range(3):
+            if norm:
+                self.sequence.append(nn.BatchNorm1d(current_features))
             self.sequence.append(nn.Linear(current_features, self.layersize))
             current_features = self.layersize
             # self.sequence.append(nn.Dropout(0.05))
@@ -67,7 +71,9 @@ class BeansModule(nn.Module):
         # print(self.sequence)
 
     def forward(self, x: torch.Tensor):
-        y = self.sequence(x.to(torch.float))
+        # x1 = self.conv(x.to(torch.float).unsqueeze(dim=1))
+        # x2 = self.flatten(x1)
+        y = self.sequence(x.to(torch.float).unsqueeze(1))
         # y = torch.softmax(y, dim=1)
         return y
 
@@ -76,17 +82,19 @@ class BeansModule(nn.Module):
 
 
 class agglomerativeModel(nn.Module):
-    def __init__(self, in_features, out_features, activationlist, count, lr):
+    def __init__(self, in_features, out_features, activationlist: list, count, lr, norm=True):
         super().__init__()
         self.modList = nn.ModuleList()
+        self.activation = str(activationlist)
         self.optm = []
         self.sched = []
+        self.count = count
 
         if not isinstance(lr, list):
             lr = [lr for x in range(count)]
 
         for x in range(count):
-            self.modList.append(BeansModule(in_features, out_features, activationlist))
+            self.modList.append(BeansModule(in_features, out_features, activationlist, norm))
             self.optm.append(torch.optim.Adam(self.modList[x].parameters(), lr[x]))
             # print([x for x in self.modList[x].parameters()])
             self.sched.append(torch.optim.lr_scheduler.StepLR(self.optm[x], 40, 0.1))
@@ -131,20 +139,21 @@ class agglomerativeModel(nn.Module):
         # print(total_loss)
 
 
-activationLists = [[nn.LeakyReLU], [nn.LeakyReLU, nn.LeakyReLU],
-                   [nn.Sigmoid], [nn.Sigmoid, nn.Sigmoid],
-                   [Cosign], [Cosign, Cosign],
-                   [nn.LeakyReLU, nn.Sigmoid], [nn.LeakyReLU, Cosign], [nn.Sigmoid, Cosign]
+activationLists = [["LeakyReLU"], ["LeakyReLU", "LeakyReLU"],
+                   ["Sigmoid"], ["Sigmoid", "Sigmoid"],
+                   ["Cos"], ["Cos", "Cos"],
+                   ["LeakyReLU", "Sigmoid"], ["LeakyReLU", "Cos"], ["Sigmoid", "Cos"]
                    ]
 
+activationDict = {"LeakyReLU": nn.LeakyReLU, "Sigmoid": nn.Sigmoid, "Cos": Cosign}
 
 if __name__ == "__main__":
     import DataSource
     from torch.utils.data import DataLoader
     from tqdm import tqdm
     beans = DataSource.beansData()
-    modules = [agglomerativeModel(beans.numFeatures, beans.numClasses, x, 5, 1) for x in activationLists]
-    # modules = [agglomerativeModel(beans.numFeatures, beans.numClasses, [nn.LeakyReLU], 1, 1)]
+    modules = [agglomerativeModel(beans.numFeatures, beans.numClasses, x, 5, 1, norm=False) for x in activationLists]
+    # modules = [agglomerativeModel(beans.numFeatures, beans.numClasses, [nn.Sigmoid], 1, 0.1)]
 
     beans_loader = DataLoader(beans, batch_size=1000, shuffle=True)
 
@@ -165,7 +174,7 @@ if __name__ == "__main__":
     #         module.debug_confMat(bean)
     #     print(total_loss)
 
-    for x in tqdm(range(150)):
+    for x in tqdm(range(50)):
         for module in modules:
             module.trainCycle(beans_loader)
 
