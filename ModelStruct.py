@@ -41,21 +41,30 @@ class Cosign(nn.Module):
         return torch.cos(x)
 
 
+class NoChange(nn.Module):
+    def __init__(self):
+        super().__init__()
+
+    def forward(self, x):
+        return x
+
+
 class BeansModule(nn.Module):
-    def __init__(self, in_features, out_features, activationlist, norm=True):
+    def __init__(self, in_features, out_features, activationlist, norm=True, layerSize=20, numLayers=3):
         super().__init__()
         current_features = in_features
         self.sequence = nn.Sequential()
-        self.layersize = 20
+        self.layersize = layerSize
+        self.numLayers = numLayers
 
-        conv = 80
-        self.sequence.append(nn.Conv1d(1, conv, kernel_size=3))
         self.sequence.append(nn.Flatten())
-        # self.conv = nn.Conv1d(1, conv, kernel_size=3)
-        # self.flatten = nn.Flatten()
-        current_features = ((current_features - 2) // 1) * conv
 
-        for x in range(3):
+        # conv = layerSize * 4
+        # self.sequence.append(nn.Conv1d(1, conv, kernel_size=3))
+        # self.sequence.append(nn.Flatten())
+        # current_features = ((current_features - 2) // 1) * conv
+
+        for x in range(numLayers):
             if norm:
                 self.sequence.append(nn.BatchNorm1d(current_features))
             self.sequence.append(nn.Linear(current_features, self.layersize))
@@ -73,7 +82,9 @@ class BeansModule(nn.Module):
     def forward(self, x: torch.Tensor):
         # x1 = self.conv(x.to(torch.float).unsqueeze(dim=1))
         # x2 = self.flatten(x1)
-        y = self.sequence(x.to(torch.float).unsqueeze(1))
+
+        # x_forConv = x.to(torch.float).unsqueeze(1)
+        y = self.sequence(x.to(torch.float))
         # y = torch.softmax(y, dim=1)
         return y
 
@@ -82,19 +93,21 @@ class BeansModule(nn.Module):
 
 
 class agglomerativeModel(nn.Module):
-    def __init__(self, in_features, out_features, activationlist: list, count, lr, norm=True):
+    def __init__(self, in_features, out_features, activationlist: list, count, lr, norm=True, layerSize=20, numLayers=3):
         super().__init__()
         self.modList = nn.ModuleList()
         self.activation = str(activationlist)
         self.optm = []
         self.sched = []
         self.count = count
+        self.layerSize = layerSize
+        self.numLayers = numLayers
 
         if not isinstance(lr, list):
             lr = [lr for x in range(count)]
 
         for x in range(count):
-            self.modList.append(BeansModule(in_features, out_features, activationlist, norm))
+            self.modList.append(BeansModule(in_features, out_features, activationlist, norm, layerSize, numLayers))
             self.optm.append(torch.optim.Adam(self.modList[x].parameters(), lr[x]))
             # print([x for x in self.modList[x].parameters()])
             self.sched.append(torch.optim.lr_scheduler.StepLR(self.optm[x], 40, 0.1))
@@ -114,11 +127,17 @@ class agglomerativeModel(nn.Module):
             f1 = 0
             prec = 0
             rec = 0
+            conf = None
             for x in self.modList:
                 predict = torch.argmax(x(data[0]), dim=1)
                 f1 += f1_score(data[1], predict, average="weighted", zero_division=0) / len(self.modList)
                 prec += precision_score(data[1], predict, average="weighted", zero_division=0) / len(self.modList)
                 rec += recall_score(data[1], predict, average="weighted", zero_division=0) / len(self.modList)
+                if conf is None:
+                    conf = confusion_matrix(data[1].detach().numpy(), predict.detach().numpy())
+                else:
+                    conf += confusion_matrix(data[1].detach().numpy(), predict.detach().numpy())
+            print(conf)
             return f1, prec, rec
 
     def trainCycle(self, dataset):
@@ -142,10 +161,14 @@ class agglomerativeModel(nn.Module):
 activationLists = [["LeakyReLU"], ["LeakyReLU", "LeakyReLU"],
                    ["Sigmoid"], ["Sigmoid", "Sigmoid"],
                    ["Cos"], ["Cos", "Cos"],
-                   ["LeakyReLU", "Sigmoid"], ["LeakyReLU", "Cos"], ["Sigmoid", "Cos"]
+                   ["ReLu"], ["ReLu", "ReLu"],
+                   ["noChange"], ["noChange", "noChange"],
+                   ["LeakyReLU", "Sigmoid"], ["LeakyReLU", "Cos"], ["Sigmoid", "Cos"],
+                   ["ReLu", "Sigmoid"], ["ReLu", "Cos"], ["ReLu", "LeakyReLU"],
+                   ["noChange", "Sigmoid"], ["noChange", "Cos"], ["noChange", "LeakyReLU"], ["noChange", "ReLu"]
                    ]
 
-activationDict = {"LeakyReLU": nn.LeakyReLU, "Sigmoid": nn.Sigmoid, "Cos": Cosign}
+activationDict = {"LeakyReLU": nn.LeakyReLU, "Sigmoid": nn.Sigmoid, "Cos": Cosign, "ReLu": nn.ReLU, "noChange": NoChange}
 
 if __name__ == "__main__":
     import DataSource

@@ -7,6 +7,7 @@ import os
 import torch
 import pandas as pd
 from torch.utils.data import Dataset, DataLoader
+import torchvision
 # https://archive.ics.uci.edu/dataset/602/dry+bean+dataset
 
 beans = {"file_adress": "https://archive.ics.uci.edu/static/public/602/dry+bean+dataset.zip", "File": "DryBeanDataset/Dry_Bean_Dataset.xlsx", "Command": pd.read_excel}
@@ -56,6 +57,30 @@ class beansData(Dataset):
 
 
 if __name__ == "__main__":
+
+    train = torchvision.datasets.MNIST("MNIST", train=True, download=True, transform=torchvision.transforms.ToTensor())
+    test = torchvision.datasets.MNIST("MNIST", train=False, download=True, transform=torchvision.transforms.ToTensor())
+    loader = DataLoader(train, batch_size=1000, shuffle=True)
+
+    totals_train = torch.zeros(10)
+    for batch in loader:
+        totals_train += batch[1].bincount()
+    print(totals_train)
+
+    loader = DataLoader(test, batch_size=1000, shuffle=True)
+
+    totals_test = torch.zeros(10)
+    for batch in loader:
+        totals_test += batch[1].bincount()
+    print(totals_test)
+
+    df = ds["Command"](file)
+    classdict = {i: x for x, i in enumerate(df["Class"].unique())}
+    # pd.Series.apply()
+    df["Class"] = df["Class"].apply(lambda x: classdict[x])
+    print(df.corr())
+    print(df["Class"].describe())
+
     beans = beansData()
 
     beans_loader = DataLoader(beans, batch_size=100, shuffle=True)

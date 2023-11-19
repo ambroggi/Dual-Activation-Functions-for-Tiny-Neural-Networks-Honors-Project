@@ -4,3 +4,4 @@ requests
 openpyxl
 scikit-learn
 tqdm
+torchvision
